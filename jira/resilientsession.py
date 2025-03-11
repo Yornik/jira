@@ -171,23 +171,38 @@ class ResilientSession(Session):
             + f"Log level debug in '{__name__}' is not safe for production code!"
         )
 
-    def _jira_prepare(self, **original_kwargs) -> dict:
+    def _jira_prepare(self, method="GET", **original_kwargs) -> dict:
         """Do any pre-processing of our own and return the updated kwargs."""
         prepared_kwargs = original_kwargs.copy()
         self.headers: CaseInsensitiveDict
         request_headers = self.headers.copy()
         request_headers.update(original_kwargs.get("headers", {}))
         prepared_kwargs["headers"] = request_headers
-
+    
         data = original_kwargs.get("data", None)
-        if isinstance(data, dict) and data:
-            # mypy ensures we don't do this,
-            # but for people subclassing we should preserve old behaviour
-            prepared_kwargs["data"] = json.dumps(data)
-
-        if "verify" not in prepared_kwargs:
-            prepared_kwargs["verify"] = self.verify
-
+        method = method.upper()
+    
+        # 🚫 Block any body for GET requests
+        if method == "GET" and data is not None:
+            if isinstance(data, (dict, str)) and not data:
+                # empty dict, empty string, or whitespace string
+                prepared_kwargs.pop("data", None)
+            elif isinstance(data, str) and data.strip() in ("", "{}"):
+                prepared_kwargs.pop("data", None)
+            else:
+                # 🚨 Strict: ban ALL data on GET requests
+                raise RuntimeError(f"Blocked request: GET with body data: {data!r}")
+    
+        # ✅ For non-GET requests, allow data if meaningful
+        elif method != "GET":
+            if isinstance(data, dict):
+                if not data:
+                    prepared_kwargs.pop("data", None)
+                else:
+                    prepared_kwargs["data"] = json.dumps(data)
+            elif isinstance(data, str) and data.strip() == "{}":
+                prepared_kwargs.pop("data", None)
+    
         return prepared_kwargs
 
     def request(  # type: ignore[override] # An intentionally different override
